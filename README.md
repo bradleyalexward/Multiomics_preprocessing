@@ -1,6 +1,6 @@
-# CorNetto
+# Multiomics_preprocessing
 
-`CorNetto` is an R package for preprocessing proteomics and metabolomics data
+`Multiomics_preprocessing` is an R package for preprocessing proteomics and metabolomics data
 for downstream multi-omics analysis.
 
 It currently provides two main workflows:
