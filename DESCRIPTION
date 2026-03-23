@@ -1,0 +1,34 @@
+Package: CorNetto
+Type: Package
+Title: Preprocess Proteomics and Metabolomics Data
+Version: 0.1.0
+Authors@R: 
+    person(given = "Bradley",
+           family = "Ward",
+           email = "bradleyalexward@gmail.com",
+           role = c("aut", "cre"))
+Description: Provides utilities for preparing proteomics precursor-level
+    and metabolomics peak-level data for downstream analysis. The package
+    supports missing value handling, MNAR or MAR classification, imputation,
+    normalisation, batch correction, aggregation, and quality-control plots.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports:
+    dplyr,
+    factoextra,
+    ggplot2,
+    limma,
+    MsCoreUtils,
+    QFeatures,
+    SummarizedExperiment,
+    sva,
+    tibble,
+    tidyr,
+    vsn
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+URL: https://github.com/bradleyalexward/Multiomics_preprocessing
+BugReports: https://github.com/bradleyalexward/Multiomics_preprocessing/issues
