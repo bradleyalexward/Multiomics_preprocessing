@@ -1,4 +1,4 @@
-Package: CorNetto
+Package: Multiomics_preprocessing
 Type: Package
 Title: Preprocess Proteomics and Metabolomics Data
 Version: 0.1.0
