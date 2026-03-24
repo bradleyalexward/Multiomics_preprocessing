@@ -6,3 +6,4 @@ Rplots.pdf
 *.tar.gz
 *.Rcheck/
 inst/scripts/test_outputs/
+Downloaded package/
