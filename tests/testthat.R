@@ -7,6 +7,6 @@
 # * https://testthat.r-lib.org/articles/special-files.html
 
 library(testthat)
-library(CorNetto)
+library(Multiomics.Preprocessing)
 
-test_check("CorNetto")
+test_check("Multiomics.Preprocessing")
