@@ -1,6 +1,6 @@
-# Multiomics_preprocessing
+# Multiomics.Preprocessing
 
-`Multiomics_preprocessing` is an R package for preprocessing proteomics and metabolomics data
+`Multiomics.Preprocessing` is an R package for preprocessing proteomics and metabolomics data
 for downstream multi-omics analysis.
 
 It currently provides two main workflows:
