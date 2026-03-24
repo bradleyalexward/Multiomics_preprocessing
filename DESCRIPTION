@@ -28,7 +28,10 @@ Imports:
     tidyr,
     vsn
 Suggests: 
+    knitr,
+    rmarkdown,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
+VignetteBuilder: knitr
 URL: https://github.com/bradleyalexward/Multiomics_preprocessing
 BugReports: https://github.com/bradleyalexward/Multiomics_preprocessing/issues
