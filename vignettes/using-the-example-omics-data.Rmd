@@ -19,14 +19,14 @@ using the example files that are bundled with the package in `inst/extdata`.
 
 ```{r load-package, eval = FALSE}
 # Load the package.
-library(CorNetto)
+library(Multiomics.Preprocessing)
 ```
 
 ## Locate and read the example files
 
 ```{r read-extdata, eval = FALSE}
 # Find the installed extdata folder so the code works after the package is installed.
-extdata_dir <- system.file("extdata", package = "CorNetto")
+extdata_dir <- system.file("extdata", package = "Multiomics.Preprocessing")
 
 # Read the shared sample metadata used by both workflows.
 samples <- read.csv(file.path(extdata_dir, "samples.csv"), check.names = FALSE)
