@@ -1,4 +1,4 @@
-Package: Multiomics_preprocessing
+Package: Multiomics.Preprocessing
 Type: Package
 Title: Preprocess Proteomics and Metabolomics Data
 Version: 0.1.0
