@@ -25,6 +25,10 @@
 #' Default is TRUE
 #' @param impute_with_value Replacement value used only when `impute_method = "with"`.
 #' Must be numeric.
+#' @param imputation_seeds Optional integer seed or integer vector controlling stochastic
+#' imputation steps. `NULL` keeps the current RNG behaviour.
+#' If length 1, successive imputation steps use `seed`, `seed + 1`, `seed + 2`, etc.
+#' If length > 1, it must match the number of imputation steps in the current run.
 #' @param impute_behaviour Whether to impute missing values globally across all samples (`"global"`)
 #' or separately within each batch using `batch_column` (`"per batch"`).
 #' Default is `"global"`. For `impute_method = "mixed"`, retained features must have at least one observed value in each batch when `"per batch"` is used.
@@ -40,17 +44,19 @@
 #' @param batch_column Column in `sample_meta_data` identifying which sample belongs to which batch.
 #' Used for optional batch-wise imputation and ComBat batch correction.
 #' @param batch_correction_variable_columns Optional biological covariates of interest to preserve during batch correction
-#' @param protein_aggregator_method Protein aggregation function. Function by which peptides are aggregated to protein level.
+#' @param protein_aggregator_method Protein aggregation function. Function by which peptides are aggregated to protein level when aggregation is requested.
 #' Default is MsCoreUtils::robustSummary, other examples include MsCoreUtils::medianPolish(), base::colMeans(), matrixStats::colMedians(), etc.
 #' Function must take a matrix as input and return a vector of length equal to the column length of the input.
-#' @param protein_aggregator_column Column in precursor-level data.frames mapping each precursor to thier identified protein (must share same name).
-#' @param plot_qc_charts Return QC plots included density plots of raw, normalised, and transformed abundances, and PCA before and after batch correction.
+#' @param protein_aggregator_column Optional column in precursor-level data.frames mapping each precursor to their identified protein (must share same name).
+#' If `NULL`, aggregation is skipped.
+#' @param plot_qc_charts Return QC plots including density plots of raw, normalised, batch-corrected, and aggregated abundances when available, plus PCA before and after batch correction.
 #' @param show_plot_legends Legend behavior for density plots (`"auto"`, `"show"`, `"hide"`).
 #' Default is auto, which hides legends if more than 12 samples are present.
 #' @param verbose If `TRUE`, print step-by-step progress messages.
 #' Default is TRUE.
 #'
-#' @return Protein abundance data.frame, or a list with proteins plus optional extras.
+#' @return A list containing the final abundance matrix, the final assay name, the full
+#' QFeatures workflow object, and optional extras such as MNAR tables and QC plots.
 #' @export
 prepare_proteins <- function(input_files,
                              fraction_file_names = NULL,
@@ -63,6 +69,7 @@ prepare_proteins <- function(input_files,
                              mnar_significance_threshold = 0.01,
                              return_mnar_results = TRUE,
                              impute_with_value = NULL,
+                             imputation_seeds = NULL,
                              impute_behaviour = c("global", "per batch"),
                              missing_feature_proportion_threshold = c(0.3, 0.75),
                              normalisation_method = c("vsn"),
@@ -70,7 +77,7 @@ prepare_proteins <- function(input_files,
                              batch_column = "Batch",
                              batch_correction_variable_columns = NULL,
                              protein_aggregator_method = MsCoreUtils::robustSummary,
-                             protein_aggregator_column = "Protein.Group",
+                             protein_aggregator_column = NULL,
                              plot_qc_charts = FALSE,
                              show_plot_legends = c("auto", "show", "hide"),
                              verbose = TRUE) {
@@ -100,6 +107,27 @@ prepare_proteins <- function(input_files,
       )
     }
     value
+  }
+
+  validate_imputation_seeds <- function(seeds) {
+    if (is.null(seeds)) return(NULL)
+    if (!is.numeric(seeds) ||
+        length(seeds) == 0 ||
+        any(is.na(seeds)) ||
+        any(!is.finite(seeds)) ||
+        any(seeds != floor(seeds))) {
+      stop("`imputation_seeds` must be NULL or an integer vector.")
+    }
+    as.integer(seeds)
+  }
+
+  resolve_imputation_seeds <- function(seeds, n_steps) {
+    if (n_steps < 1L) return(integer(0))
+    if (is.null(seeds)) return(rep(NA_integer_, n_steps))
+    if (length(seeds) == 1L) return(as.integer(seeds[1] + seq_len(n_steps) - 1L))
+    if (length(seeds) == n_steps) return(seeds)
+    stop("`imputation_seeds` must have length 1 or ", n_steps,
+         " for the current imputation configuration.")
   }
 
   resolve_quant_cols <- function(df, cols, fraction_label) {
@@ -184,15 +212,11 @@ prepare_proteins <- function(input_files,
   remove_missing_constant <- function(df, quant_cols) {
     x <- df[, quant_cols, drop = FALSE]
     all_missing <- rowSums(is.na(x)) == ncol(x)
-    constant <- apply(x, 1, function(v) {
-      v <- v[!is.na(v)]
-      length(v) >= 2 && stats::var(v) == 0
-    })
-    keep <- !(all_missing | constant)
+    keep <- !all_missing
     list(
       data = df[keep, , drop = FALSE],
       n_missing = sum(all_missing),
-      n_constant = sum(constant),
+      n_constant = 0L,
       n_before = nrow(df),
       n_after = sum(keep)
     )
@@ -211,8 +235,13 @@ prepare_proteins <- function(input_files,
 
   build_batch_pca_plot <- function(assay_matrix, bio_df, batch_col, title, context_label) {
     x_complete <- assay_matrix[stats::complete.cases(assay_matrix), , drop = FALSE]
+    keep_non_constant <- apply(x_complete, 1, function(v) {
+      v <- v[is.finite(v) & !is.na(v)]
+      length(v) >= 2 && stats::var(v) > 0
+    })
+    x_complete <- x_complete[keep_non_constant, , drop = FALSE]
     if (nrow(x_complete) < 2) {
-      log_step("Skipping %s PCA: fewer than 2 complete features remain after NA filtering.", context_label)
+      log_step("Skipping %s PCA: fewer than 2 non-constant complete features remain after filtering.", context_label)
       return(NULL)
     }
 
@@ -368,7 +397,12 @@ prepare_proteins <- function(input_files,
     do.call(rbind, details[seq_len(n_details)])
   }
 
-  impute_single_assay <- function(se_obj, method, label) {
+  impute_single_assay <- function(se_obj, method, label, seed = NA_integer_) {
+    if (!is.na(seed)) {
+      set.seed(seed, kind = "L'Ecuyer-CMRG")
+      log_step("  %s: using imputation seed %d.", label, seed)
+    }
+
     if (method == "mixed") {
       randna <- !as.logical(SummarizedExperiment::rowData(se_obj)$MNAR)
       randna[is.na(randna)] <- TRUE
@@ -381,14 +415,19 @@ prepare_proteins <- function(input_files,
     imp
   }
 
-  impute_assay_by_batch <- function(se_obj, batch_groups, method) {
+  impute_assay_by_batch <- function(se_obj, batch_groups, method, seeds) {
     assay_imputed <- SummarizedExperiment::assay(se_obj)
 
     for (i in seq_along(batch_groups)) {
       batch_name <- names(batch_groups)[i]
       batch_samples <- batch_groups[[i]]
       batch_se <- se_obj[, batch_samples, drop = FALSE]
-      batch_imp <- impute_single_assay(batch_se, method, paste0("Batch '", batch_name, "'"))
+      batch_imp <- impute_single_assay(
+        batch_se,
+        method,
+        paste0("Batch '", batch_name, "'"),
+        seed = seeds[i]
+      )
       assay_imputed[, batch_samples] <- SummarizedExperiment::assay(batch_imp)
       log_step("  Batch '%s': imputation complete for %d sample(s).", batch_name, length(batch_samples))
     }
@@ -456,9 +495,11 @@ prepare_proteins <- function(input_files,
     stop("`normalisation_method` must have length 1 or 2.")
   }
 
-  if (!is.function(protein_aggregator_method)) stop("`protein_aggregator_method` must be a function.")
-  if (!is.character(protein_aggregator_column) || length(protein_aggregator_column) != 1 || is.na(protein_aggregator_column)) {
-    stop("`protein_aggregator_column` must be a single character string.")
+  if (!is.null(protein_aggregator_column)) {
+    if (!is.function(protein_aggregator_method)) stop("`protein_aggregator_method` must be a function when aggregation is requested.")
+    if (!is.character(protein_aggregator_column) || length(protein_aggregator_column) != 1 || is.na(protein_aggregator_column) || protein_aggregator_column == "") {
+      stop("`protein_aggregator_column` must be NULL or a single non-empty character string.")
+    }
   }
 
   if (impute_method == "MLE2") {
@@ -482,6 +523,7 @@ prepare_proteins <- function(input_files,
       stop("When `impute_method = 'with'`, `impute_with_value` must be a single finite numeric value.")
     }
   }
+  imputation_seeds <- validate_imputation_seeds(imputation_seeds)
 
   use_batchwise_imputation <- (impute_method != "none") && identical(impute_behaviour, "per batch")
   needs_batch_info <- use_batchwise_imputation || isTRUE(batch_correction)
@@ -612,8 +654,8 @@ prepare_proteins <- function(input_files,
   cleaned <- lapply(seq_along(dfs), function(i) remove_missing_constant(dfs[[i]], quant_cols_list[[i]]))
   for (i in seq_along(cleaned)) {
     dfs[[i]] <- cleaned[[i]]$data
-    log_step("  Fraction '%s': removed %d all-missing and %d constant features (kept %d/%d).",
-             fraction_file_names[i], cleaned[[i]]$n_missing, cleaned[[i]]$n_constant,
+    log_step("  Fraction '%s': removed %d all-missing features (kept %d/%d).",
+             fraction_file_names[i], cleaned[[i]]$n_missing,
              cleaned[[i]]$n_after, cleaned[[i]]$n_before)
   }
 
@@ -690,6 +732,13 @@ prepare_proteins <- function(input_files,
   source_assays <- names(qf)
   if (impute_method != "none") {
     log_step("Starting imputation using method '%s'.", impute_method)
+    n_imputation_steps <- if (use_batchwise_imputation) {
+      length(source_assays) * length(batch_groups)
+    } else {
+      length(source_assays)
+    }
+    resolved_imputation_seeds <- resolve_imputation_seeds(imputation_seeds, n_imputation_steps)
+    next_seed_idx <- 1L
     for (nm in source_assays) {
       na_before <- sum(is.na(SummarizedExperiment::assay(qf[[nm]])))
       if (use_batchwise_imputation) {
@@ -712,9 +761,13 @@ prepare_proteins <- function(input_files,
           }
         }
         log_step("  Assay '%s': imputing missing values separately within %d batch(es).", nm, length(batch_groups))
-        imp <- impute_assay_by_batch(qf[[nm]], batch_groups, impute_method)
+        batch_seeds <- resolved_imputation_seeds[next_seed_idx:(next_seed_idx + length(batch_groups) - 1L)]
+        next_seed_idx <- next_seed_idx + length(batch_groups)
+        imp <- impute_assay_by_batch(qf[[nm]], batch_groups, impute_method, seeds = batch_seeds)
       } else {
-        imp <- impute_single_assay(qf[[nm]], impute_method, paste0("Assay '", nm, "'"))
+        step_seed <- resolved_imputation_seeds[next_seed_idx]
+        next_seed_idx <- next_seed_idx + 1L
+        imp <- impute_single_assay(qf[[nm]], impute_method, paste0("Assay '", nm, "'"), seed = step_seed)
       }
 
       na_after <- sum(is.na(SummarizedExperiment::assay(imp)))
@@ -736,7 +789,7 @@ prepare_proteins <- function(input_files,
   # Combine fractions
   # -------------------------------------------------------------------------
   if (length(use_assays) > 1) {
-    log_step("Combining %d assays into a single assay.", length(use_assays))
+    log_step("Combining %d assays into a single raw assay.", length(use_assays))
     combined <- do.call(rbind, lapply(use_assays, function(nm) {
       cbind(as.data.frame(SummarizedExperiment::rowData(qf[[nm]])),
             SummarizedExperiment::assay(qf, nm))
@@ -747,19 +800,18 @@ prepare_proteins <- function(input_files,
       quantCols = colnames(combined) %in% sample_cols,
       fnames = precursor_id_column
     ))
-    q <- QFeatures::QFeatures(list(se = se_combined))
-    se_name <- "se"
+    q <- QFeatures::QFeatures(list(raw = se_combined))
   } else {
-    q <- QFeatures::QFeatures(list(se = qf[[use_assays[1]]]))
-    se_name <- "se"
+    q <- QFeatures::QFeatures(list(raw = qf[[use_assays[1]]]))
   }
+  assay_name <- "raw"
 
   # -------------------------------------------------------------------------
   # QC plots
   # -------------------------------------------------------------------------
   plots <- list()
   if (plot_qc_charts) {
-    plots$raw_quantities <- plot_density(SummarizedExperiment::assay(q[[se_name]]), "Raw", show_plot_legends)
+    plots$raw_quantities <- plot_density(SummarizedExperiment::assay(q[[assay_name]]), "Raw", show_plot_legends)
   }
 
   # -------------------------------------------------------------------------
@@ -770,20 +822,23 @@ prepare_proteins <- function(input_files,
   }
   if (length(normalisation_method) == 1) {
     log_step("Applying normalisation '%s'.", normalisation_method[1])
-    q <- run_quiet(QFeatures::normalize(q, i = se_name, name = "norm", method = normalisation_method[1]))
-    assay_name <- "norm"
+    q <- run_quiet(QFeatures::normalize(q, i = assay_name, name = "normalised", method = normalisation_method[1]))
+    assay_name <- "normalised"
   } else {
     log_step("Applying transform '%s' then normalisation '%s'.", normalisation_method[1], normalisation_method[2])
-    x <- SummarizedExperiment::assay(q[[se_name]])
+    x <- SummarizedExperiment::assay(q[[assay_name]])
     if (normalisation_method[1] == "log2") x <- log2(x)
     if (normalisation_method[1] == "log") x <- log(x)
     if (normalisation_method[1] == "log10") x <- log10(x)
     if (plot_qc_charts) {
       plots$transformed_quantities <- plot_density(x, "After transformation", show_plot_legends)
     }
-    SummarizedExperiment::assay(q[[se_name]]) <- x
-    q <- run_quiet(QFeatures::normalize(q, i = se_name, name = "norm", method = normalisation_method[2]))
-    assay_name <- "norm"
+    transformed_se <- q[[assay_name]]
+    SummarizedExperiment::assay(transformed_se) <- x
+    q_norm <- QFeatures::QFeatures(list(transformed = transformed_se))
+    q_norm <- run_quiet(QFeatures::normalize(q_norm, i = "transformed", name = "normalised", method = normalisation_method[2]))
+    q[["normalised"]] <- q_norm[["normalised"]]
+    assay_name <- "normalised"
   }
   if (plot_qc_charts) {
     plots$normalised_quantities <- plot_density(SummarizedExperiment::assay(q[[assay_name]]), "After normalisation", show_plot_legends)
@@ -817,10 +872,14 @@ prepare_proteins <- function(input_files,
                                  data = bio)
     }
     corrected <- run_quiet(sva::ComBat(dat = x, batch = batch, mod = mod, par.prior = TRUE, prior.plots = FALSE))
-    SummarizedExperiment::assay(q[[assay_name]]) <- corrected
+    batch_corrected_se <- q[[assay_name]]
+    SummarizedExperiment::assay(batch_corrected_se) <- corrected
+    q[["batch_corrected"]] <- batch_corrected_se
+    assay_name <- "batch_corrected"
     log_step("Batch correction complete.")
 
     if (plot_qc_charts) {
+      plots$batch_corrected_quantities <- plot_density(SummarizedExperiment::assay(q[[assay_name]]), "After batch correction", show_plot_legends)
       after_pca_plot <- build_batch_pca_plot(
         assay_matrix = SummarizedExperiment::assay(q[[assay_name]]),
         bio_df = bio,
@@ -840,40 +899,58 @@ prepare_proteins <- function(input_files,
   # -------------------------------------------------------------------------
   # Aggregate to proteins
   # -------------------------------------------------------------------------
-  row_data <- SummarizedExperiment::rowData(q[[assay_name]])
-  if (!(protein_aggregator_column %in% colnames(row_data))) {
-    fallback_rowdata <- SummarizedExperiment::rowData(q[[se_name]])
-    if (protein_aggregator_column %in% colnames(fallback_rowdata)) {
-      row_data[[protein_aggregator_column]] <- fallback_rowdata[[protein_aggregator_column]]
-      SummarizedExperiment::rowData(q[[assay_name]]) <- row_data
-    } else {
-      stop("`protein_aggregator_column` not found in rowData of assay '", assay_name, "'.")
+  aggregation_performed <- !is.null(protein_aggregator_column)
+  final_assay_name <- assay_name
+  abundances <- as.data.frame(SummarizedExperiment::assay(q[[final_assay_name]]))
+
+  if (aggregation_performed) {
+    row_data <- SummarizedExperiment::rowData(q[[assay_name]])
+    if (!(protein_aggregator_column %in% colnames(row_data))) {
+      fallback_rowdata <- SummarizedExperiment::rowData(q[["raw"]])
+      if (protein_aggregator_column %in% colnames(fallback_rowdata)) {
+        row_data[[protein_aggregator_column]] <- fallback_rowdata[[protein_aggregator_column]]
+        SummarizedExperiment::rowData(q[[assay_name]]) <- row_data
+      } else {
+        stop("`protein_aggregator_column` not found in rowData of assay '", assay_name, "'.")
+      }
     }
+
+    log_step("Aggregating precursor features to proteins using '%s'.", protein_aggregator_column)
+    q <- run_quiet(QFeatures::aggregateFeatures(
+      q,
+      i = assay_name,
+      fcol = protein_aggregator_column,
+      name = "aggregated",
+      fun = protein_aggregator_method,
+      na.rm = TRUE
+    ))
+
+    proteins_mat <- SummarizedExperiment::assay(q[["aggregated"]])
+    proteins_na <- sum(is.na(proteins_mat))
+    if (proteins_na > 0) {
+      stop("Protein aggregation produced ", proteins_na, " missing values.")
+    }
+    if (plot_qc_charts) {
+      plots$aggregated_quantities <- plot_density(proteins_mat, "After aggregation", show_plot_legends)
+    }
+    final_assay_name <- "aggregated"
+    abundances <- as.data.frame(proteins_mat)
+    log_step("Finished: %d proteins x %d samples.", nrow(abundances), ncol(abundances))
+  } else {
+    log_step("Aggregation skipped (`protein_aggregator_column = NULL`).")
+    log_step("Finished: %d features x %d samples.", nrow(abundances), ncol(abundances))
   }
 
-  log_step("Aggregating precursor features to proteins using '%s'.", protein_aggregator_column)
-  q <- run_quiet(QFeatures::aggregateFeatures(
-    q,
-    i = assay_name,
-    fcol = protein_aggregator_column,
-    name = "Proteins",
-    fun = protein_aggregator_method,
-    na.rm = TRUE
-  ))
-
-  proteins_mat <- SummarizedExperiment::assay(q[["Proteins"]])
-  proteins_na <- sum(is.na(proteins_mat))
-  if (proteins_na > 0) {
-    stop("Protein aggregation produced ", proteins_na, " missing values.")
+  out <- list(
+    abundances = abundances,
+    final_assay_name = final_assay_name,
+    qfeatures = q
+  )
+  if (aggregation_performed) {
+    out$proteins <- abundances
+  } else {
+    out$precursors <- abundances
   }
-  proteins <- as.data.frame(proteins_mat)
-  log_step("Finished: %d proteins x %d samples.", nrow(proteins), ncol(proteins))
-
-  if (!return_mnar_results && !plot_qc_charts) {
-    return(proteins)
-  }
-
-  out <- list(proteins = proteins)
   if (return_mnar_results) {
     if (do_mnar && length(mnar_tables) == 0) {
       stop("`mnar_results` is empty while `impute_method = 'mixed'`. MNAR classification failed.")

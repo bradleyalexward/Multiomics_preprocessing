@@ -26,6 +26,10 @@
 #' Default is TRUE
 #' @param impute_with_value Replacement value used only when `impute_method = "with"`.
 #' Must be numeric.
+#' @param imputation_seeds Optional integer seed or integer vector controlling stochastic
+#' imputation steps. `NULL` keeps the current RNG behaviour.
+#' If length 1, successive imputation steps use `seed`, `seed + 1`, `seed + 2`, etc.
+#' If length > 1, it must match the number of imputation steps in the current run.
 #' @param impute_behaviour Whether to impute missing values globally across all samples (`"global"`)
 #' or separately within each batch using `batch_column` (`"per batch"`).
 #' Default is `"per batch"`. For `impute_method = "mixed"`, retained peaks must have at least one observed value in each batch when `"per batch"` is used.
@@ -46,18 +50,19 @@
 #' Used for optional batch-specific filtering, optional batch-wise imputation, and ComBat batch correction.
 #' Must be supplied explicitly when `batch_specific_features_threshold` is used.
 #' @param batch_correction_variable_columns Optional biological covariates of interest to preserve during batch correction
-#' @param metabolite_aggregator_method Metabolite aggregation function. Function by which multiple peaks are aggregated to metabolite level.
+#' @param metabolite_aggregator_method Metabolite aggregation function. Function by which multiple peaks are aggregated to metabolite level when aggregation is requested.
 #' Default is MsCoreUtils::robustSummary, other examples include MsCoreUtils::medianPolish(), base::colMeans(), matrixStats::colMedians(), etc.
 #' Function must take a matrix as input and return a vector of length equal to the column length of the input.
-#' @param metabolite_aggregator_column Column in peak-level data.frames mapping each peak to its identified metabolite ID/name (must share same name).
-#' In the supplied example metabolite files, this is `"Compound ID"`.
-#' @param plot_qc_charts Return QC plots including density plots of raw, normalised, and transformed abundances, and PCA before and after batch correction.
+#' @param metabolite_aggregator_column Optional column in peak-level data.frames mapping each peak to its identified metabolite ID/name (must share same name).
+#' If `NULL`, aggregation is skipped.
+#' @param plot_qc_charts Return QC plots including density plots of raw, normalised, batch-corrected, and aggregated abundances when available, plus transformed abundances when a separate transform step is used and PCA before and after batch correction.
 #' @param show_plot_legends Legend behavior for density plots (`"auto"`, `"show"`, `"hide"`).
 #' Default is auto, which hides legends if more than 12 samples are present.
 #' @param verbose If `TRUE`, print step-by-step progress messages.
 #' Default is TRUE.
 #'
-#' @return Metabolite abundance data.frame, or a list with metabolites plus optional extras.
+#' @return A list containing the final abundance matrix, the final assay name, the full
+#' QFeatures workflow object, and optional extras such as MNAR tables and QC plots.
 #' @export
 prepare_metabolites <- function(input_files,
                                 dataset_file_names = NULL,
@@ -70,6 +75,7 @@ prepare_metabolites <- function(input_files,
                                 mnar_significance_threshold = 0.01,
                                 return_mnar_results = TRUE,
                                 impute_with_value = NULL,
+                                imputation_seeds = NULL,
                                 impute_behaviour = c("per batch", "global"),
                                 missing_feature_proportion_threshold = c(0.3, 0.75),
                                 batch_specific_features_threshold = NULL,
@@ -78,7 +84,7 @@ prepare_metabolites <- function(input_files,
                                 batch_column = "Batch",
                                 batch_correction_variable_columns = NULL,
                                 metabolite_aggregator_method = MsCoreUtils::robustSummary,
-                                metabolite_aggregator_column = "Compound ID",
+                                metabolite_aggregator_column = NULL,
                                 plot_qc_charts = FALSE,
                                 show_plot_legends = c("auto", "show", "hide"),
                                 verbose = TRUE) {
@@ -110,6 +116,27 @@ prepare_metabolites <- function(input_files,
       )
     }
     value
+  }
+
+  validate_imputation_seeds <- function(seeds) {
+    if (is.null(seeds)) return(NULL)
+    if (!is.numeric(seeds) ||
+        length(seeds) == 0 ||
+        any(is.na(seeds)) ||
+        any(!is.finite(seeds)) ||
+        any(seeds != floor(seeds))) {
+      stop("`imputation_seeds` must be NULL or an integer vector.")
+    }
+    as.integer(seeds)
+  }
+
+  resolve_imputation_seeds <- function(seeds, n_steps) {
+    if (n_steps < 1L) return(integer(0))
+    if (is.null(seeds)) return(rep(NA_integer_, n_steps))
+    if (length(seeds) == 1L) return(as.integer(seeds[1] + seq_len(n_steps) - 1L))
+    if (length(seeds) == n_steps) return(seeds)
+    stop("`imputation_seeds` must have length 1 or ", n_steps,
+         " for the current imputation configuration.")
   }
 
   resolve_quant_cols <- function(df, cols, dataset_label) {
@@ -194,15 +221,11 @@ prepare_metabolites <- function(input_files,
   remove_missing_constant <- function(df, quant_cols) {
     x <- df[, quant_cols, drop = FALSE]
     all_missing <- rowSums(is.na(x)) == ncol(x)
-    constant <- apply(x, 1, function(v) {
-      v <- v[!is.na(v)]
-      length(v) >= 2 && stats::var(v) == 0
-    })
-    keep <- !(all_missing | constant)
+    keep <- !all_missing
     list(
       data = df[keep, , drop = FALSE],
       n_missing = sum(all_missing),
-      n_constant = sum(constant),
+      n_constant = 0L,
       n_before = nrow(df),
       n_after = sum(keep)
     )
@@ -210,15 +233,11 @@ prepare_metabolites <- function(input_files,
 
   remove_constant_matrix <- function(x) {
     all_missing <- rowSums(is.na(x)) == ncol(x)
-    constant <- apply(x, 1, function(v) {
-      v <- v[is.finite(v) & !is.na(v)]
-      length(v) >= 2 && stats::var(v) == 0
-    })
-    keep <- !(all_missing | constant)
+    keep <- !all_missing
     list(
       data = x[keep, , drop = FALSE],
       n_missing = sum(all_missing),
-      n_constant = sum(constant),
+      n_constant = 0L,
       n_before = nrow(x),
       n_after = sum(keep)
     )
@@ -247,8 +266,13 @@ prepare_metabolites <- function(input_files,
 
   build_batch_pca_plot <- function(assay_matrix, bio_df, batch_col, title, context_label) {
     x_complete <- assay_matrix[stats::complete.cases(assay_matrix), , drop = FALSE]
+    keep_non_constant <- apply(x_complete, 1, function(v) {
+      v <- v[is.finite(v) & !is.na(v)]
+      length(v) >= 2 && stats::var(v) > 0
+    })
+    x_complete <- x_complete[keep_non_constant, , drop = FALSE]
     if (nrow(x_complete) < 2) {
-      log_step("Skipping %s PCA: fewer than 2 complete features remain after NA filtering.", context_label)
+      log_step("Skipping %s PCA: fewer than 2 non-constant complete features remain after filtering.", context_label)
       return(NULL)
     }
 
@@ -431,7 +455,12 @@ prepare_metabolites <- function(input_files,
     do.call(rbind, details[seq_len(n_details)])
   }
 
-  impute_single_assay <- function(se_obj, method, label) {
+  impute_single_assay <- function(se_obj, method, label, seed = NA_integer_) {
+    if (!is.na(seed)) {
+      set.seed(seed, kind = "L'Ecuyer-CMRG")
+      log_step("  %s: using imputation seed %d.", label, seed)
+    }
+
     if (method == "mixed") {
       randna <- !as.logical(SummarizedExperiment::rowData(se_obj)$MNAR)
       randna[is.na(randna)] <- TRUE
@@ -444,14 +473,19 @@ prepare_metabolites <- function(input_files,
     imp
   }
 
-  impute_assay_by_batch <- function(se_obj, batch_groups, method) {
+  impute_assay_by_batch <- function(se_obj, batch_groups, method, seeds) {
     assay_imputed <- SummarizedExperiment::assay(se_obj)
 
     for (i in seq_along(batch_groups)) {
       batch_name <- names(batch_groups)[i]
       batch_samples <- batch_groups[[i]]
       batch_se <- se_obj[, batch_samples, drop = FALSE]
-      batch_imp <- impute_single_assay(batch_se, method, paste0("Batch '", batch_name, "'"))
+      batch_imp <- impute_single_assay(
+        batch_se,
+        method,
+        paste0("Batch '", batch_name, "'"),
+        seed = seeds[i]
+      )
       assay_imputed[, batch_samples] <- SummarizedExperiment::assay(batch_imp)
       log_step("  Batch '%s': imputation complete for %d sample(s).", batch_name, length(batch_samples))
     }
@@ -478,8 +512,11 @@ prepare_metabolites <- function(input_files,
   if (!is.character(peak_id_column) || length(peak_id_column) != 1 || is.na(peak_id_column)) {
     stop("`peak_id_column` must be a single character string.")
   }
-  if (!is.character(metabolite_aggregator_column) || length(metabolite_aggregator_column) != 1 || is.na(metabolite_aggregator_column)) {
-    stop("`metabolite_aggregator_column` must be a single character string.")
+  if (!is.null(metabolite_aggregator_column)) {
+    if (!is.function(metabolite_aggregator_method)) stop("`metabolite_aggregator_method` must be a function when aggregation is requested.")
+    if (!is.character(metabolite_aggregator_column) || length(metabolite_aggregator_column) != 1 || is.na(metabolite_aggregator_column) || metabolite_aggregator_column == "") {
+      stop("`metabolite_aggregator_column` must be NULL or a single non-empty character string.")
+    }
   }
 
   if (!is.null(dataset_file_names)) {
@@ -534,8 +571,6 @@ prepare_metabolites <- function(input_files,
     stop("`normalisation_method` must have length 1 or 2.")
   }
 
-  if (!is.function(metabolite_aggregator_method)) stop("`metabolite_aggregator_method` must be a function.")
-
   if (impute_method == "MLE2") {
     stop("`impute_method = 'MLE2'` is defunct in QFeatures. Please use `impute_method = 'MLE'`.")
   }
@@ -557,6 +592,7 @@ prepare_metabolites <- function(input_files,
       stop("When `impute_method = 'with'`, `impute_with_value` must be a single finite numeric value.")
     }
   }
+  imputation_seeds <- validate_imputation_seeds(imputation_seeds)
 
   use_batchwise_imputation <- (impute_method != "none") && identical(impute_behaviour, "per batch")
   needs_batch_info <- !is.null(batch_specific_features_threshold) || use_batchwise_imputation || isTRUE(batch_correction)
@@ -595,16 +631,18 @@ prepare_metabolites <- function(input_files,
     if (!(peak_id_column %in% colnames(dfs[[i]]))) {
       stop("`peak_id_column` ('", peak_id_column, "') not found in dataset '", dataset_name, "'.")
     }
-    if (!(metabolite_aggregator_column %in% colnames(dfs[[i]]))) {
-      stop("`metabolite_aggregator_column` ('", metabolite_aggregator_column, "') not found in dataset '", dataset_name, "'.")
-    }
     quant_cols_list[[i]] <- resolve_quant_cols(dfs[[i]], peak_abundance_columns, dataset_name)
     protected_cols <- colnames(dfs[[i]])[quant_cols_list[[i]]]
     if (peak_id_column %in% protected_cols) {
       stop("`peak_id_column` cannot be included in `peak_abundance_columns` for dataset '", dataset_name, "'.")
     }
-    if (metabolite_aggregator_column %in% protected_cols) {
-      stop("`metabolite_aggregator_column` cannot be included in `peak_abundance_columns` for dataset '", dataset_name, "'.")
+    if (!is.null(metabolite_aggregator_column)) {
+      if (!(metabolite_aggregator_column %in% colnames(dfs[[i]]))) {
+        stop("`metabolite_aggregator_column` ('", metabolite_aggregator_column, "') not found in dataset '", dataset_name, "'.")
+      }
+      if (metabolite_aggregator_column %in% protected_cols) {
+        stop("`metabolite_aggregator_column` cannot be included in `peak_abundance_columns` for dataset '", dataset_name, "'.")
+      }
     }
     dfs[[i]] <- coerce_abundance_to_numeric(dfs[[i]], quant_cols_list[[i]], dataset_name)
   }
@@ -664,8 +702,8 @@ prepare_metabolites <- function(input_files,
   cleaned <- lapply(seq_along(dfs), function(i) remove_missing_constant(dfs[[i]], quant_cols_list[[i]]))
   for (i in seq_along(cleaned)) {
     dfs[[i]] <- cleaned[[i]]$data
-    log_step("  Dataset '%s': removed %d all-missing and %d constant peaks (kept %d/%d).",
-             dataset_file_names[i], cleaned[[i]]$n_missing, cleaned[[i]]$n_constant,
+    log_step("  Dataset '%s': removed %d all-missing peaks (kept %d/%d).",
+             dataset_file_names[i], cleaned[[i]]$n_missing,
              cleaned[[i]]$n_after, cleaned[[i]]$n_before)
   }
 
@@ -688,8 +726,8 @@ prepare_metabolites <- function(input_files,
       fnames = peak_id_column
     )
   )
-  q <- QFeatures::QFeatures(list(se = se))
-  se_name <- "se"
+  q <- QFeatures::QFeatures(list(raw = se))
+  se_name <- "raw"
   log_step("Created combined QFeatures object with %d peak(s).", nrow(q[[se_name]]))
 
   # -------------------------------------------------------------------------
@@ -757,6 +795,8 @@ prepare_metabolites <- function(input_files,
   # -------------------------------------------------------------------------
   if (impute_method != "none") {
     log_step("Starting imputation using method '%s'.", impute_method)
+    n_imputation_steps <- if (use_batchwise_imputation) length(batch_groups) else 1L
+    resolved_imputation_seeds <- resolve_imputation_seeds(imputation_seeds, n_imputation_steps)
     na_before <- sum(is.na(SummarizedExperiment::assay(q[[se_name]])))
     if (use_batchwise_imputation) {
       if (impute_method == "mixed") {
@@ -778,9 +818,9 @@ prepare_metabolites <- function(input_files,
         }
       }
       log_step("Imputing missing values separately within %d batch(es).", length(batch_groups))
-      imp <- impute_assay_by_batch(q[[se_name]], batch_groups, impute_method)
+      imp <- impute_assay_by_batch(q[[se_name]], batch_groups, impute_method, seeds = resolved_imputation_seeds)
     } else {
-      imp <- impute_single_assay(q[[se_name]], impute_method, paste0("Assay '", se_name, "'"))
+      imp <- impute_single_assay(q[[se_name]], impute_method, paste0("Assay '", se_name, "'"), seed = resolved_imputation_seeds[1])
     }
     na_after <- sum(is.na(SummarizedExperiment::assay(imp)))
     if (na_after > 0) {
@@ -811,8 +851,8 @@ prepare_metabolites <- function(input_files,
   }
   if (length(normalisation_method) == 1) {
     log_step("Applying normalisation '%s'.", normalisation_method[1])
-    q <- run_quiet(QFeatures::normalize(q, i = assay_name, name = "norm", method = normalisation_method[1]))
-    assay_name <- "norm"
+    q <- run_quiet(QFeatures::normalize(q, i = assay_name, name = "normalised", method = normalisation_method[1]))
+    assay_name <- "normalised"
   } else {
     log_step("Applying transform '%s' then normalisation '%s'.", normalisation_method[1], normalisation_method[2])
     x <- SummarizedExperiment::assay(q[[assay_name]])
@@ -822,9 +862,12 @@ prepare_metabolites <- function(input_files,
     if (plot_qc_charts) {
       plots$transformed_quantities <- plot_density(x, "After transformation", show_plot_legends)
     }
-    SummarizedExperiment::assay(q[[assay_name]]) <- x
-    q <- run_quiet(QFeatures::normalize(q, i = assay_name, name = "norm", method = normalisation_method[2]))
-    assay_name <- "norm"
+    transformed_se <- q[[assay_name]]
+    SummarizedExperiment::assay(transformed_se) <- x
+    q_norm <- QFeatures::QFeatures(list(transformed = transformed_se))
+    q_norm <- run_quiet(QFeatures::normalize(q_norm, i = "transformed", name = "normalised", method = normalisation_method[2]))
+    q[["normalised"]] <- q_norm[["normalised"]]
+    assay_name <- "normalised"
   }
   if (plot_qc_charts) {
     plots$normalised_quantities <- plot_density(SummarizedExperiment::assay(q[[assay_name]]), "After normalisation", show_plot_legends)
@@ -858,10 +901,14 @@ prepare_metabolites <- function(input_files,
                                  data = bio)
     }
     corrected <- run_quiet(sva::ComBat(dat = x, batch = batch, mod = mod, par.prior = TRUE, prior.plots = FALSE))
-    SummarizedExperiment::assay(q[[assay_name]]) <- corrected
+    batch_corrected_se <- q[[assay_name]]
+    SummarizedExperiment::assay(batch_corrected_se) <- corrected
+    q[["batch_corrected"]] <- batch_corrected_se
+    assay_name <- "batch_corrected"
     log_step("Batch correction complete.")
 
     if (plot_qc_charts) {
+      plots$batch_corrected_quantities <- plot_density(SummarizedExperiment::assay(q[[assay_name]]), "After batch correction", show_plot_legends)
       after_pca_plot <- build_batch_pca_plot(
         assay_matrix = SummarizedExperiment::assay(q[[assay_name]]),
         bio_df = bio,
@@ -881,52 +928,71 @@ prepare_metabolites <- function(input_files,
   # -------------------------------------------------------------------------
   # Aggregate to metabolites
   # -------------------------------------------------------------------------
-  row_data <- SummarizedExperiment::rowData(q[[assay_name]])
-  if (!(metabolite_aggregator_column %in% colnames(row_data))) {
-    fallback_rowdata <- SummarizedExperiment::rowData(q[[se_name]])
-    if (metabolite_aggregator_column %in% colnames(fallback_rowdata)) {
-      row_data[[metabolite_aggregator_column]] <- fallback_rowdata[[metabolite_aggregator_column]]
-      SummarizedExperiment::rowData(q[[assay_name]]) <- row_data
-    } else {
-      stop("`metabolite_aggregator_column` not found in rowData of assay '", assay_name, "'.")
+  aggregation_performed <- !is.null(metabolite_aggregator_column)
+  final_assay_name <- assay_name
+  abundances <- as.data.frame(SummarizedExperiment::assay(q[[final_assay_name]]))
+
+  if (aggregation_performed) {
+    row_data <- SummarizedExperiment::rowData(q[[assay_name]])
+    if (!(metabolite_aggregator_column %in% colnames(row_data))) {
+      fallback_rowdata <- SummarizedExperiment::rowData(q[["raw"]])
+      if (metabolite_aggregator_column %in% colnames(fallback_rowdata)) {
+        row_data[[metabolite_aggregator_column]] <- fallback_rowdata[[metabolite_aggregator_column]]
+        SummarizedExperiment::rowData(q[[assay_name]]) <- row_data
+      } else {
+        stop("`metabolite_aggregator_column` not found in rowData of assay '", assay_name, "'.")
+      }
     }
+
+    metabolite_ids <- as.character(SummarizedExperiment::rowData(q[[assay_name]])[[metabolite_aggregator_column]])
+    if (anyNA(metabolite_ids) || any(metabolite_ids == "")) {
+      stop("`metabolite_aggregator_column` contains missing or empty metabolite identifiers after preprocessing.")
+    }
+
+    log_step("Aggregating peak features to metabolites using '%s'.", metabolite_aggregator_column)
+    q <- run_quiet(QFeatures::aggregateFeatures(
+      q,
+      i = assay_name,
+      fcol = metabolite_aggregator_column,
+      name = "aggregated",
+      fun = metabolite_aggregator_method,
+      na.rm = TRUE
+    ))
+
+    metabolites_mat <- SummarizedExperiment::assay(q[["aggregated"]])
+    metabolites_na <- sum(is.na(metabolites_mat))
+    if (metabolites_na > 0) {
+      stop("Metabolite aggregation produced ", metabolites_na, " missing values.")
+    }
+    if (plot_qc_charts) {
+      plots$aggregated_quantities <- plot_density(metabolites_mat, "After aggregation", show_plot_legends)
+    }
+    final_assay_name <- "aggregated"
+    abundances <- as.data.frame(metabolites_mat)
+    metabolite_cleanup <- remove_constant_matrix(as.matrix(abundances))
+    abundances <- as.data.frame(metabolite_cleanup$data)
+    if (metabolite_cleanup$n_missing > 0 || metabolite_cleanup$n_constant > 0) {
+      q[["aggregated"]] <- q[["aggregated"]][rownames(abundances), , drop = FALSE]
+      log_step("Removed %d all-missing metabolites after aggregation (kept %d/%d).",
+               metabolite_cleanup$n_missing,
+               metabolite_cleanup$n_after, metabolite_cleanup$n_before)
+    }
+    log_step("Finished: %d metabolites x %d samples.", nrow(abundances), ncol(abundances))
+  } else {
+    log_step("Aggregation skipped (`metabolite_aggregator_column = NULL`).")
+    log_step("Finished: %d peaks x %d samples.", nrow(abundances), ncol(abundances))
   }
 
-  metabolite_ids <- as.character(SummarizedExperiment::rowData(q[[assay_name]])[[metabolite_aggregator_column]])
-  if (anyNA(metabolite_ids) || any(metabolite_ids == "")) {
-    stop("`metabolite_aggregator_column` contains missing or empty metabolite identifiers after preprocessing.")
+  out <- list(
+    abundances = abundances,
+    final_assay_name = final_assay_name,
+    qfeatures = q
+  )
+  if (aggregation_performed) {
+    out$metabolites <- abundances
+  } else {
+    out$peaks <- abundances
   }
-
-  log_step("Aggregating peak features to metabolites using '%s'.", metabolite_aggregator_column)
-  q <- run_quiet(QFeatures::aggregateFeatures(
-    q,
-    i = assay_name,
-    fcol = metabolite_aggregator_column,
-    name = "Metabolites",
-    fun = metabolite_aggregator_method,
-    na.rm = TRUE
-  ))
-
-  metabolites_mat <- SummarizedExperiment::assay(q[["Metabolites"]])
-  metabolites_na <- sum(is.na(metabolites_mat))
-  if (metabolites_na > 0) {
-    stop("Metabolite aggregation produced ", metabolites_na, " missing values.")
-  }
-  metabolites <- as.data.frame(metabolites_mat)
-  metabolite_cleanup <- remove_constant_matrix(as.matrix(metabolites))
-  metabolites <- as.data.frame(metabolite_cleanup$data)
-  if (metabolite_cleanup$n_missing > 0 || metabolite_cleanup$n_constant > 0) {
-    log_step("Removed %d all-missing and %d constant metabolites after aggregation (kept %d/%d).",
-             metabolite_cleanup$n_missing, metabolite_cleanup$n_constant,
-             metabolite_cleanup$n_after, metabolite_cleanup$n_before)
-  }
-  log_step("Finished: %d metabolites x %d samples.", nrow(metabolites), ncol(metabolites))
-
-  if (!return_mnar_results && !plot_qc_charts) {
-    return(metabolites)
-  }
-
-  out <- list(metabolites = metabolites)
   if (return_mnar_results) {
     if (do_mnar && length(mnar_tables) == 0) {
       stop("`mnar_results` is empty while `impute_method = 'mixed'`. MNAR classification failed.")
