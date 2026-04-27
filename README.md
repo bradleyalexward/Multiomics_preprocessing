@@ -37,3 +37,8 @@ testthat::test_dir("tests/testthat")
 - `tests/testthat/` contains package tests
 - `inst/extdata/` contains example input files
 - `inst/scripts/` contains helper scripts for broader manual testing
+
+##Citation
+Please cite this work if using or building upon it.
+Ward, B. (2026). Multi-omics preprocessing core. R package version V1.0. https://github.com/bradleyalexward/Multiomics_preprocessing
+[![DOI](https://zenodo.org/badge/1187038698.svg)](https://doi.org/10.5281/zenodo.19819176)
