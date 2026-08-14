@@ -19,7 +19,28 @@ The package supports:
 ## Installation
 
 ```r
-remotes::install_github("bradleyalexward/Multiomics_preprocessing")
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+
+BiocManager::install(
+  c(
+    "limma",
+    "MsCoreUtils",
+    "QFeatures",
+    "SummarizedExperiment",
+    "sva",
+    "vsn"
+  ),
+  ask = FALSE,
+  update = FALSE
+)
+
+remotes::install_github(
+  "bradleyalexward/Multiomics_preprocessing",
+  upgrade = "never",
+  dependencies = NA
+)
 ```
 
 ## Development checks
