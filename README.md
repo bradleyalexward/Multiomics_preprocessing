@@ -108,5 +108,6 @@ devtools::check()
 
 ## Citation
 Please cite this work if using or building upon it.
+
 Ward, B. (2026). Multi-omics preprocessing core. R package version 0.2.0. https://github.com/bradleyalexward/Multiomics_preprocessing
 [![DOI](https://zenodo.org/badge/1187038698.svg)](https://doi.org/10.5281/zenodo.19819176)
