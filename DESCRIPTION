@@ -1,7 +1,7 @@
 Package: Multiomics.Preprocessing
 Type: Package
 Title: Preprocess Proteomics and Metabolomics Data
-Version: 0.2.0
+Version: 2.0.0
 Authors@R:
     person(given = "Bradley",
            family = "Ward",
