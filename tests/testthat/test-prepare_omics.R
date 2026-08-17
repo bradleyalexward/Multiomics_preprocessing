@@ -25,10 +25,7 @@ testthat::test_that("prepare functions validate impute_behaviour values early", 
 })
 
 testthat::test_that("prepare_proteins can impute per batch with non-mixed methods", {
-  testthat::skip_if_not_installed("dplyr")
-  testthat::skip_if_not_installed("MsCoreUtils")
   testthat::skip_if_not_installed("QFeatures")
-  testthat::skip_if_not_installed("SummarizedExperiment")
 
   sample_meta <- data.frame(
     Sample = c("S1", "S2", "S3", "S4"),
@@ -59,18 +56,51 @@ testthat::test_that("prepare_proteins can impute per batch with non-mixed method
     verbose = FALSE
   )
 
-  testthat::expect_s3_class(proteins, "data.frame")
-  testthat::expect_false(anyNA(proteins))
-  testthat::expect_equal(sort(colnames(proteins)), c("S1", "S2", "S3", "S4"))
+  # Aggregation was not requested, so the result is the always-list contract
+  # with the abundance matrix under $abundances (and $precursors as an alias).
+  testthat::expect_type(proteins, "list")
+  testthat::expect_s3_class(proteins$abundances, "data.frame")
+  testthat::expect_false(anyNA(proteins$abundances))
+  testthat::expect_equal(sort(colnames(proteins$abundances)), c("S1", "S2", "S3", "S4"))
+  testthat::expect_identical(proteins$abundances, proteins$precursors)
+  testthat::expect_identical(proteins$final_assay_name, "normalised")
+})
+
+testthat::test_that("aggregation switches the result alias and assay name", {
+  testthat::skip_if_not_installed("QFeatures")
+
+  sample_meta <- data.frame(Sample = c("S1", "S2", "S3", "S4"),
+                            stringsAsFactors = FALSE)
+  precursors <- data.frame(
+    Precursor.Id = c("pep1", "pep2", "pep3", "pep4"),
+    Protein.Group = c("P1", "P1", "P2", "P2"),
+    S1 = c(10, 5, 8, 9), S2 = c(11, 6, 7, 8),
+    S3 = c(12, 7, 9, 10), S4 = c(9, 8, 6, 11),
+    stringsAsFactors = FALSE
+  )
+
+  res <- prepare_proteins(
+    input_files = list(precursors),
+    sample_meta_data = sample_meta,
+    precursor_abundance_columns = c("S1", "S2", "S3", "S4"),
+    impute_method = "none",
+    normalisation_method = "center.mean",
+    protein_aggregator_method = base::colMeans,
+    protein_aggregator_column = "Protein.Group",
+    return_mnar_results = FALSE,
+    verbose = FALSE
+  )
+
+  testthat::expect_identical(res$final_assay_name, "aggregated")
+  testthat::expect_identical(res$abundances, res$proteins)
+  testthat::expect_null(res$precursors)
+  testthat::expect_equal(sort(rownames(res$proteins)), c("P1", "P2"))
 })
 
 testthat::test_that("prepare_proteins blocks per-batch mixed imputation when a batch is fully missing", {
-  testthat::skip_if_not_installed("dplyr")
-  testthat::skip_if_not_installed("MsCoreUtils")
   testthat::skip_if_not_installed("QFeatures")
-  testthat::skip_if_not_installed("SummarizedExperiment")
-  testthat::skip_if_not_installed("tibble")
-  testthat::skip_if_not_installed("tidyr")
+  testthat::skip_if_not_installed("missForest")
+  testthat::skip_if_not_installed("imputeLCMD")
 
   sample_meta <- data.frame(
     Sample = c("S1", "S2", "S3", "S4"),
@@ -105,4 +135,15 @@ testthat::test_that("prepare_proteins blocks per-batch mixed imputation when a b
     ),
     "impute_behaviour = 'global'"
   )
+})
+
+testthat::test_that("missing optional imputation engines are reported before any work", {
+  testthat::expect_identical(
+    Multiomics.Preprocessing:::mp_impute_engines("mixed"),
+    c("missForest", "imputeLCMD")
+  )
+  testthat::expect_identical(
+    Multiomics.Preprocessing:::mp_impute_engines("QRILC"), "imputeLCMD")
+  testthat::expect_identical(
+    Multiomics.Preprocessing:::mp_impute_engines("zero"), character(0))
 })

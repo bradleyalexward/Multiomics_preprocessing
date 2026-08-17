@@ -10,6 +10,7 @@ prepare_proteins(
   precursor_abundance_columns,
   precursor_id_column = "Precursor.Id",
   sample_meta_data,
+  sample_id_column = NULL,
   zero_handling = c("leave", "na"),
   impute_method = c("none", "mixed", "bpca", "knn", "QRILC", "MLE", "MLE2", "MinDet",
     "MinProb", "min", "zero", "nbavg", "with", "RF"),
@@ -17,14 +18,16 @@ prepare_proteins(
   mnar_significance_threshold = 0.01,
   return_mnar_results = TRUE,
   impute_with_value = NULL,
+  imputation_seeds = NULL,
   impute_behaviour = c("global", "per batch"),
   missing_feature_proportion_threshold = c(0.3, 0.75),
+  batch_specific_features_threshold = NULL,
   normalisation_method = c("vsn"),
   batch_correction = FALSE,
   batch_column = "Batch",
   batch_correction_variable_columns = NULL,
   protein_aggregator_method = MsCoreUtils::robustSummary,
-  protein_aggregator_column = "Protein.Group",
+  protein_aggregator_column = NULL,
   plot_qc_charts = FALSE,
   show_plot_legends = c("auto", "show", "hide"),
   verbose = TRUE
@@ -44,12 +47,19 @@ Example: 5:70 or c("Quant1", "Quant2", "Quant3", etc)}
 
 \item{sample_meta_data}{Sample metadata data.frame (one row per sample).}
 
+\item{sample_id_column}{Optional column in \code{sample_meta_data} holding the sample
+identifiers that match the abundance column names. If \code{NULL} (the default) the
+column is detected automatically; detection requires exactly one column to
+contain every assay sample ID and errors if several do.}
+
 \item{zero_handling}{Either \code{"na"} (replace 0 with NA) or \code{"leave"}.
 Default is "leave"}
 
 \item{impute_method}{Missing-value imputation strategy.
 Can be any of: "none", "mixed", "bpca", "knn", "QRILC", "MLE", "MLE2", "MinDet", "MinProb", "min", "zero", "nbavg", "with", "RF".
-When mixed is selected, MNAR features imputed via QRILC, MAR features imputed via RF.}
+When mixed is selected, MNAR features imputed via QRILC, MAR features imputed via RF.
+Several methods rely on optional packages (see Details); these are checked before
+any work is done and reported with an install command if missing.}
 
 \item{mnar_variables}{Optional character vector of column name(s) in \code{sample_meta_data}
 used when \code{impute_method = "mixed"}.
@@ -67,34 +77,54 @@ Default is TRUE}
 \item{impute_with_value}{Replacement value used only when \code{impute_method = "with"}.
 Must be numeric.}
 
+\item{imputation_seeds}{Optional integer seed or integer vector controlling stochastic
+imputation steps. \code{NULL} keeps the current RNG behaviour.
+If length 1, successive imputation steps use \code{seed}, \code{seed + 1}, \code{seed + 2}, etc.
+If length > 1, it must match the number of imputation steps in the current run.
+The caller's random number generator state is restored when the function exits.}
+
 \item{impute_behaviour}{Whether to impute missing values globally across all samples (\code{"global"})
 or separately within each batch using \code{batch_column} (\code{"per batch"}).
 Default is \code{"global"}. For \code{impute_method = "mixed"}, retained features must have at least one observed value in each batch when \code{"per batch"} is used.}
 
 \item{missing_feature_proportion_threshold}{Length 1 or 2 numeric threshold(s) in \verb{[0, 1]}.
 Default is c(0.3, 0.75). Here, features with more than 30\% missingness are removed (first numeric) unless they are MNAR, in which case they are retained up to 75\% missingness.
-If only one numeric is supplied like c(0.3), this will be the missingness threshold of all features.
+If only one numeric is supplied like c(0.3), it sets the threshold for MAR features;
+MNAR features are then retained up to 0.75, or up to the supplied value when that is
+higher than 0.75. Features are retained when missingness is less than or equal to the
+applicable threshold.
 Two numbers must only be supplied if impute_method = "mixed"}
 
+\item{batch_specific_features_threshold}{Optional missingness threshold used to remove features mostly missing within any batch before imputation.
+Default is \code{NULL}, meaning no batch-specific feature removal is performed.
+If a number is supplied, features with more than this proportion of missing values in any batch are removed.
+Applied to each fraction separately, before fractions are combined.
+Example: \code{0.9} removes features with more than 90\% missingness in at least one batch.}
+
 \item{normalisation_method}{Length 1 normalisation method, or length 2 transform+method. Transform methods include log, log2, log10.
-Normalise methods include "sum", "max", "center.mean", "center.median", "div.mean", "div.median", "diff.meda", "quantiles", "quantiles.robust" or "vsn".
-Example: c("vsn) or c("Log10, "center.median").
+Normalise methods include "sum", "max", "center.mean", "center.median", "div.mean", "div.median", "diff.median", "quantiles", "quantiles.robust" or "vsn".
+Example: c("vsn") or c("log10", "center.median").
 Default is vsn.}
 
 \item{batch_correction}{Apply ComBat batch correction.}
 
 \item{batch_column}{Column in \code{sample_meta_data} identifying which sample belongs to which batch.
-Used for optional batch-wise imputation and ComBat batch correction.}
+Used for optional batch-specific filtering, optional batch-wise imputation, and ComBat batch correction.
+Must be supplied explicitly when \code{batch_specific_features_threshold} is used.}
 
 \item{batch_correction_variable_columns}{Optional biological covariates of interest to preserve during batch correction}
 
-\item{protein_aggregator_method}{Protein aggregation function. Function by which peptides are aggregated to protein level.
-Default is MsCoreUtils::robustSummary, other examples include MsCoreUtils::medianPolish(), base::colMeans(), matrixStats::colMedians(), etc.
-Function must take a matrix as input and return a vector of length equal to the column length of the input.}
+\item{protein_aggregator_method}{Protein aggregation function. Function by which peptides are aggregated to protein level when aggregation is requested.
+Default is MsCoreUtils::robustSummary, other examples include MsCoreUtils::medianPolish, base::colMeans, matrixStats::colMedians, etc.
+Function must take a matrix as input and return a vector of length equal to the column length of the input.
+It must also accept an \code{na.rm} argument (or \code{...}), because aggregation is always called with \code{na.rm = TRUE}.}
 
-\item{protein_aggregator_column}{Column in precursor-level data.frames mapping each precursor to thier identified protein (must share same name).}
+\item{protein_aggregator_column}{Optional column in precursor-level data.frames mapping each precursor to their identified protein (must share same name).
+If \code{NULL}, aggregation is skipped.}
 
-\item{plot_qc_charts}{Return QC plots included density plots of raw, normalised, and transformed abundances, and PCA before and after batch correction.}
+\item{plot_qc_charts}{Return QC plots including density plots of raw, normalised, batch-corrected, and aggregated abundances when available, plus PCA before and after batch correction.
+QC plots are captured with \code{\link[grDevices:recordPlot]{grDevices::recordPlot()}} and are intended for interactive
+sessions; on a file device they may return blank.}
 
 \item{show_plot_legends}{Legend behavior for density plots (\code{"auto"}, \code{"show"}, \code{"hide"}).
 Default is auto, which hides legends if more than 12 samples are present.}
@@ -103,8 +133,41 @@ Default is auto, which hides legends if more than 12 samples are present.}
 Default is TRUE.}
 }
 \value{
-Protein abundance data.frame, or a list with proteins plus optional extras.
+A list containing the final abundance matrix, the final assay name, the full
+QFeatures workflow object, and optional extras such as MNAR tables and QC plots.
 }
 \description{
 Prepare proteomics data from precursor intensities to a protein abundance matrix
 }
+\section{Input layout}{
+Each element of \code{input_files} must be a \emph{wide} table: one row per precursor and
+one column per sample. Long-format search engine output (for example a DIA-NN
+\code{report.tsv}) must be pivoted to that shape first.
+
+Fractions may carry different ancillary annotation columns; they are combined by
+taking the union, with \code{NA} where a fraction lacks a column. Only
+\code{precursor_id_column}, \code{protein_aggregator_column} and the abundance columns must
+be common to every fraction.
+}
+
+\section{Missingness classification}{
+When \code{impute_method = "mixed"}, each precursor is tested with a logistic regression
+asking whether its \emph{detection} pattern is explained by \code{mnar_variables}. The test
+is a likelihood-ratio comparison of the covariate model against an intercept-only
+model, with a single Benjamini-Hochberg correction across features.
+
+This detects association between detection and the metadata you supplied. It is a
+practical heuristic for routing features to left-censored (QRILC) imputation, not a
+proof of the formal missing-not-at-random mechanism, which depends on values that
+were never observed.
+}
+
+\section{Optional dependencies}{
+Some imputation methods are implemented by packages that \code{MsCoreUtils} only
+suggests, so they are not installed automatically:
+\code{"mixed"} needs missForest and imputeLCMD; \code{"RF"} needs missForest;
+\code{"QRILC"}, \code{"MinDet"} and \code{"MinProb"} need imputeLCMD; \code{"knn"} needs impute;
+\code{"bpca"} needs pcaMethods; \code{"MLE"} needs norm. Quantile normalisation needs
+preprocessCore.
+}
+
