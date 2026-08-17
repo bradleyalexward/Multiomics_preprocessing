@@ -18,9 +18,9 @@ The package supports:
 
 ## Requirements
 
-R >= 4.0 and Bioconductor >= 3.19. The `QFeatures` floor of 1.14.0 matters: earlier
+R >= 4.0 and Bioconductor >= 3.19. `QFeatures` should be minimum v1.14.0: earlier
 releases named the abundance-column argument of `readSummarizedExperiment()` `ecol`
-rather than `quantCols`, and this package fails at run time against them. Development
+rather than `quantCols` and will cause package failure. Development
 and testing are done on R 4.4.1 with Bioconductor 3.20.
 
 ## Installation
@@ -32,26 +32,19 @@ if (!requireNamespace("remotes", quietly = TRUE)) install.packages("remotes")
 # Core dependencies.
 BiocManager::install(
   c("limma", "MsCoreUtils", "QFeatures", "SummarizedExperiment", "sva", "vsn"),
-  ask = FALSE, update = FALSE
-)
+  ask = FALSE)
 
 # Optional imputation and normalisation engines. MsCoreUtils only suggests these,
 # so they are not installed automatically -- but "mixed", the default for
 # prepare_metabolites(), needs missForest and imputeLCMD.
 BiocManager::install(
   c("missForest", "imputeLCMD", "impute", "norm", "pcaMethods", "preprocessCore"),
-  ask = FALSE, update = FALSE
-)
+  ask = FALSE)
 
 remotes::install_github(
   "bradleyalexward/Multiomics_preprocessing",
-  upgrade = "never",
-  dependencies = NA
-)
+  dependencies = NA)
 ```
-
-`upgrade = "never"` keeps your existing packages in place. If the install succeeds but
-a run fails inside QFeatures, check your version against the floor above.
 
 ### Which optional packages does each method need?
 
