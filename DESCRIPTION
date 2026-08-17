@@ -1,6 +1,6 @@
 Package: OmicsRefinery
 Title: Preprocess Multi-Omics Data
-Version: 3.0.0.
+Version: 3.0.0
 URL: https://github.com/bradleyalexward/OmicsRefinery
 BugReports: https://github.com/bradleyalexward/OmicsRefinery/issues
 Authors@R:
