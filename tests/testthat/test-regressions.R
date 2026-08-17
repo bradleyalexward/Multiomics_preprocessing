@@ -36,7 +36,7 @@ testthat::test_that("abundance columns are built in the requested order, not fil
 
   reversed <- rev(samples_12)
 
-  res <- prepare_metabolites(
+  res <- refineMetabolomics(
     input_files = list(stats::setNames(make_precursors(), c("Compound", "Compound_ID", samples_12))),
     peak_abundance_columns = reversed,
     peak_id_column = "Compound",
@@ -67,9 +67,9 @@ testthat::test_that("shuffled metadata rows give identical results to ordered me
     verbose = FALSE
   )
 
-  ordered  <- do.call(prepare_proteins, c(args, list(sample_meta_data = make_meta())))
+  ordered  <- do.call(refineProteomics, c(args, list(sample_meta_data = make_meta())))
   set.seed(11)
-  shuffled <- do.call(prepare_proteins,
+  shuffled <- do.call(refineProteomics,
                       c(args, list(sample_meta_data = make_meta()[sample(12), ])))
 
   testthat::expect_equal(ordered$abundances, shuffled$abundances)
@@ -84,9 +84,9 @@ classify <- function(detected, covariates = c("Condition", "Sex"), cutoff = 0.05
   se <- QFeatures::readSummarizedExperiment(df, quantCols = samples_12,
                                             fnames = "Feature")
   qf <- QFeatures::QFeatures(list(raw = se))
-  info <- Multiomics.Preprocessing:::mp_build_sample_info(
+  info <- OmicsRefinery:::mp_build_sample_info(
     make_meta(), samples_12, "meta", "Sample")
-  Multiomics.Preprocessing:::mp_classify_missingness(
+  OmicsRefinery:::mp_classify_missingness(
     qf, info, covariates, "raw", "Feature", cutoff, 0.3)$results
 }
 
@@ -143,14 +143,14 @@ testthat::test_that("factor abundance columns keep their displayed values", {
   df <- data.frame(id = c("a", "b", "c"),
                    S1 = factor(c("10", "100", "20")),
                    stringsAsFactors = FALSE)
-  out <- Multiomics.Preprocessing:::mp_coerce_abundance_to_numeric(df, 2L, "test")
+  out <- OmicsRefinery:::mp_coerce_abundance_to_numeric(df, 2L, "test")
 
   # as.numeric() on a factor returns level codes: this used to yield 1, 2, 3.
   testthat::expect_identical(out$S1, c(10, 100, 20))
 
   bad <- data.frame(id = "a", S1 = factor("not a number"), stringsAsFactors = FALSE)
   testthat::expect_error(
-    Multiomics.Preprocessing:::mp_coerce_abundance_to_numeric(bad, 2L, "test"),
+    OmicsRefinery:::mp_coerce_abundance_to_numeric(bad, 2L, "test"),
     "Non-numeric values"
   )
 })
@@ -162,11 +162,11 @@ testthat::test_that("ambiguous sample ID columns error, and sample_id_column res
   meta$Paired_ID <- rev(meta$Sample)          # a second full-coverage column
 
   testthat::expect_error(
-    Multiomics.Preprocessing:::mp_build_sample_info(meta, samples_12, "meta"),
+    OmicsRefinery:::mp_build_sample_info(meta, samples_12, "meta"),
     "Multiple columns"
   )
 
-  info <- Multiomics.Preprocessing:::mp_build_sample_info(
+  info <- OmicsRefinery:::mp_build_sample_info(
     meta, samples_12, "meta", sample_id_column = "Sample")
   testthat::expect_identical(info$Sample, samples_12)
   testthat::expect_identical(attr(info, "sample_col"), "Sample")
@@ -181,7 +181,7 @@ testthat::test_that("tibble metadata survives and keeps the QC plots", {
   grDevices::dev.control(displaylist = "enable")
   on.exit(grDevices::dev.off(), add = TRUE)
 
-  res <- prepare_proteins(
+  res <- refineProteomics(
     input_files = list(make_precursors(n = 20)),
     sample_meta_data = tibble::as_tibble(make_meta()),
     precursor_abundance_columns = samples_12,
@@ -204,7 +204,7 @@ testthat::test_that("tibble metadata survives and keeps the QC plots", {
 # --- thresholds ------------------------------------------------------------
 
 testthat::test_that("a scalar threshold is never stricter for MNAR than for MAR", {
-  mnar_thr <- Multiomics.Preprocessing:::mp_mnar_threshold
+  mnar_thr <- OmicsRefinery:::mp_mnar_threshold
 
   testthat::expect_equal(mnar_thr(0.3), 0.75)   # documented allowance
   testthat::expect_equal(mnar_thr(0.9), 0.9)    # never below the MAR threshold
@@ -219,7 +219,7 @@ testthat::test_that("features exactly on the threshold are retained in both path
   df <- make_precursors(n = 4)
   df[1, samples_12[1:3]] <- NA
 
-  res <- prepare_proteins(
+  res <- refineProteomics(
     input_files = list(df),
     sample_meta_data = make_meta(),
     precursor_abundance_columns = samples_12,
@@ -246,7 +246,7 @@ testthat::test_that("the caller's random number generator is restored", {
   before_kind <- RNGkind()
   before_seed <- get(".Random.seed", envir = globalenv())
 
-  invisible(prepare_proteins(
+  invisible(refineProteomics(
     input_files = list(fixture),
     sample_meta_data = meta,
     precursor_abundance_columns = samples_12,
@@ -272,7 +272,7 @@ testthat::test_that("fractions with different annotation columns combine", {
   f1$Modified.Sequence <- paste0("MOD", seq_len(6))   # only in fraction 1
   f2$Proteotypic <- rep(1L, 6)                        # only in fraction 2
 
-  res <- prepare_proteins(
+  res <- refineProteomics(
     input_files = list(f1, f2),
     fraction_file_names = c("F1", "F2"),
     sample_meta_data = make_meta(),
@@ -299,7 +299,7 @@ testthat::test_that("a log transform of non-positive values stops", {
   df[1, samples_12[1]] <- 0
 
   testthat::expect_error(
-    prepare_proteins(
+    refineProteomics(
       input_files = list(df),
       sample_meta_data = make_meta(),
       precursor_abundance_columns = samples_12,
@@ -321,7 +321,7 @@ testthat::test_that("the bundled metabolomics example runs end to end", {
   testthat::skip_if_not_installed("imputeLCMD")
   testthat::skip_on_cran()
 
-  dir <- system.file("extdata", package = "Multiomics.Preprocessing")
+  dir <- system.file("extdata", package = "OmicsRefinery")
   testthat::skip_if(dir == "", "example data not installed")
 
   samples <- utils::read.csv(file.path(dir, "samples.csv"), check.names = FALSE)
@@ -329,7 +329,7 @@ testthat::test_that("the bundled metabolomics example runs end to end", {
   pos <- utils::read.csv(file.path(dir, "Metabolites_PosM1.csv"), check.names = FALSE)
   cols <- intersect(samples$Sample_ID, colnames(neg))
 
-  res <- prepare_metabolites(
+  res <- refineMetabolomics(
     input_files = list(neg, pos),
     dataset_file_names = c("NegM1", "PosM1"),
     peak_abundance_columns = cols,
@@ -359,7 +359,7 @@ testthat::test_that("the bundled proteomics example runs end to end", {
   testthat::skip_if_not_installed("imputeLCMD")
   testthat::skip_on_cran()
 
-  dir <- system.file("extdata", package = "Multiomics.Preprocessing")
+  dir <- system.file("extdata", package = "OmicsRefinery")
   testthat::skip_if(dir == "", "example data not installed")
 
   samples <- utils::read.csv(file.path(dir, "samples.csv"), check.names = FALSE)
@@ -369,7 +369,7 @@ testthat::test_that("the bundled proteomics example runs end to end", {
   })
   cols <- intersect(samples$Sample_ID, colnames(fr[[1]]))
 
-  res <- prepare_proteins(
+  res <- refineProteomics(
     input_files = fr,
     fraction_file_names = c("F1", "F2", "F3"),
     precursor_abundance_columns = cols,

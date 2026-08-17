@@ -126,10 +126,10 @@ write_metabolite_file("PosM1", 200, file.path(out_dir, "Metabolites_PosM1.csv"))
 write_metabolite_file("PosM2", 200, file.path(out_dir, "Metabolites_PosM2.csv"))
 
 # ---------------------------------------------------------------------------
-# Proteomics: three fractions in the wide layout prepare_proteins() expects
+# Proteomics: three fractions in the wide layout refineProteomics() expects
 # ---------------------------------------------------------------------------
 # Note the deliberate schema differences: each fraction carries one annotation
-# column the others do not. prepare_proteins() combines these by taking the
+# column the others do not. refineProteomics() combines these by taking the
 # union of annotation columns.
 write_protein_file <- function(fraction, n_precursors, extra, file) {
   x <- simulate_block(n_precursors, sample_meta$Proteomic_batch, fraction)

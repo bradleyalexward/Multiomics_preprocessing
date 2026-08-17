@@ -110,7 +110,7 @@
 #' @return A list containing the final abundance matrix, the final assay name, the full
 #' QFeatures workflow object, and optional extras such as MNAR tables and QC plots.
 #' @export
-prepare_proteins <- function(input_files,
+refineProteomics <- function(input_files,
                              fraction_file_names = NULL,
                              precursor_abundance_columns,
                              precursor_id_column = "Precursor.Id",

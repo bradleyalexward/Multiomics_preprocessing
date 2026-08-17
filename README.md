@@ -10,8 +10,8 @@ for downstream multi-omics analysis.
 
 It currently provides two main workflows:
 
-- `prepare_proteins()` for precursor-to-protein preprocessing
-- `prepare_metabolites()` for peak-to-metabolite preprocessing
+- `refineProteomics()` for precursor-to-protein preprocessing
+- `refineMetabolomics()` for peak-to-metabolite preprocessing
 
 The package supports:
 
@@ -41,7 +41,7 @@ BiocManager::install(
 
 # Optional imputation and normalisation engines. MsCoreUtils only suggests these,
 # so they are not installed automatically -- but "mixed", the default for
-# prepare_metabolites(), needs missForest and imputeLCMD.
+# refineMetabolomics(), needs missForest and imputeLCMD.
 BiocManager::install(
   c("missForest", "imputeLCMD", "impute", "norm", "pcaMethods", "preprocessCore"),
   ask = FALSE)
@@ -114,5 +114,8 @@ devtools::check()
 ## Citation
 Please cite this work if using or building upon it.
 
-Ward, B. (2026). Multi-omics preprocessing core. R package version 2.0.0. https://github.com/bradleyalexward/Multiomics_preprocessing
+Ward, B. (2026). OmicsRefinery: preprocessing for multi-omics data. R package version 0.2.1. https://github.com/bradleyalexward/OmicsRefinery
+
+Formerly released as `Multiomics.Preprocessing`; the package and both exported
+functions were renamed in 0.2.1.
 [![DOI](https://zenodo.org/badge/1187038698.svg)](https://doi.org/10.5281/zenodo.19819176)

@@ -99,7 +99,7 @@
 #' @return A list containing the final abundance matrix, the final assay name, the full
 #' QFeatures workflow object, and optional extras such as MNAR tables and QC plots.
 #' @export
-prepare_metabolites <- function(input_files,
+refineMetabolomics <- function(input_files,
                                 dataset_file_names = NULL,
                                 peak_abundance_columns,
                                 peak_id_column = "Compound",
