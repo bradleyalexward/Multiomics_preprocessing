@@ -1,8 +1,8 @@
 Package: Multiomics.Preprocessing
 Type: Package
 Title: Preprocess Proteomics and Metabolomics Data
-Version: 0.1.0
-Authors@R: 
+Version: 0.2.0
+Authors@R:
     person(given = "Bradley",
            family = "Ward",
            email = "bradleyalexward@gmail.com",
@@ -14,24 +14,33 @@ Description: Provides utilities for preparing proteomics precursor-level
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.2
+Depends:
+    R (>= 4.0.0)
 Imports:
     dplyr,
-    factoextra,
     ggplot2,
+    grDevices,
     limma,
-    MsCoreUtils,
-    QFeatures,
+    MsCoreUtils (>= 1.10.0),
+    QFeatures (>= 1.14.0),
+    stats,
     SummarizedExperiment,
     sva,
-    tibble,
-    tidyr,
+    utils,
     vsn
-Suggests: 
+Suggests:
+    impute,
+    imputeLCMD,
     knitr,
+    missForest,
+    norm,
+    pcaMethods,
+    preprocessCore,
     rmarkdown,
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    tibble
 Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://github.com/bradleyalexward/Multiomics_preprocessing
 BugReports: https://github.com/bradleyalexward/Multiomics_preprocessing/issues
+Config/roxygen2/version: 8.0.0

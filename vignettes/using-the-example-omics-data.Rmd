@@ -14,152 +14,158 @@ knitr::opts_chunk$set(
 )
 ```
 
-This vignette shows how to run `prepare_metabolites()` and `prepare_proteins()`
-using the example files that are bundled with the package in `inst/extdata`.
+This vignette runs `prepare_metabolites()` and `prepare_proteins()` end to end
+using the example files bundled with the package in `inst/extdata`.
 
-```{r load-package, eval = FALSE}
-# Load the package.
+> **The bundled files are synthetic.** Every value was drawn from a random
+> number generator by `data-raw/make-example-data.R`. They contain no real
+> measurements and no human subject data. Their column names and layout imitate
+> a cleaned Progenesis QI peak table and a wide precursor table so that the
+> examples look like real input.
+
+```{r load-package}
 library(Multiomics.Preprocessing)
 ```
 
 ## Locate and read the example files
 
-```{r read-extdata, eval = FALSE}
-# Find the installed extdata folder so the code works after the package is installed.
+```{r read-extdata}
 extdata_dir <- system.file("extdata", package = "Multiomics.Preprocessing")
 
-# Read the shared sample metadata used by both workflows.
+# Shared sample metadata used by both workflows.
 samples <- read.csv(file.path(extdata_dir, "samples.csv"), check.names = FALSE)
 
-# Read the four metabolomics example files.
+# Four metabolomics peak tables (two ionisation modes x two runs).
 neg_m1 <- read.csv(file.path(extdata_dir, "Metabolites_NegM1.csv"), check.names = FALSE)
 neg_m2 <- read.csv(file.path(extdata_dir, "Metabolites_NegM2.csv"), check.names = FALSE)
 pos_m1 <- read.csv(file.path(extdata_dir, "Metabolites_PosM1.csv"), check.names = FALSE)
 pos_m2 <- read.csv(file.path(extdata_dir, "Metabolites_PosM2.csv"), check.names = FALSE)
 
-# Read the three proteomics fraction files.
+# Three proteomics fractions, already pivoted to one column per sample.
 fraction_1 <- read.csv(file.path(extdata_dir, "Proteomics_fraction_1.csv"), check.names = FALSE)
 fraction_2 <- read.csv(file.path(extdata_dir, "Proteomics_fraction_2.csv"), check.names = FALSE)
 fraction_3 <- read.csv(file.path(extdata_dir, "Proteomics_fraction_3.csv"), check.names = FALSE)
+
+str(samples)
 ```
 
-The `samples` table contains the sample-level metadata used during MNAR
-classification, optional batch-aware processing, and optional batch correction.
-The functions automatically detect which metadata column contains the sample IDs
-by matching the values in `sample_meta_data` to the abundance column names in
-the omics tables.
+Sample identifiers live in `samples$Sample_ID`, and the abundance columns in
+each omics table are named after those identifiers. Both functions detect the
+metadata column holding the sample IDs automatically; if more than one column
+qualifies, they stop and ask you to name it with `sample_id_column`.
 
-## Optional quick trial
+## Selecting the abundance columns
 
-If you want a faster test run before processing the full example files, you can
-subset the feature tables first.
+The peak and precursor tables begin with annotation columns and then carry one
+column per sample. Select the abundance columns **by name** rather than by a
+numeric range: a range silently rots if the file layout changes, and picking up
+an annotation column by mistake is the most common way to get an error here.
 
-```{r optional-trim, eval = FALSE}
-# Keep only the first 500 features from each file for a quick trial run.
-neg_m1_small <- neg_m1[1:500, , drop = FALSE]
-neg_m2_small <- neg_m2[1:500, , drop = FALSE]
-pos_m1_small <- pos_m1[1:500, , drop = FALSE]
-pos_m2_small <- pos_m2[1:500, , drop = FALSE]
-
-fraction_1_small <- fraction_1[1:500, , drop = FALSE]
-fraction_2_small <- fraction_2[1:500, , drop = FALSE]
-fraction_3_small <- fraction_3[1:500, , drop = FALSE]
+```{r pick-columns}
+abundance_columns <- intersect(samples$Sample_ID, colnames(neg_m1))
+length(abundance_columns)
+setdiff(colnames(neg_m1), abundance_columns)   # the annotation columns
 ```
 
 ## Prepare the metabolomics data
 
-```{r prepare-metabolites, eval = FALSE}
-# Run the metabolomics preprocessing workflow on the four example datasets.
-# Here we use mixed imputation, classify MNAR features using Sample_group and Sex,
-# and impute within each metabolomics batch.
+Mixed imputation classifies each peak by whether its *detection* pattern is
+explained by `Sample_group` and `Sex`, then imputes accordingly: QRILC for peaks
+that look left-censored, random forest for the rest. Imputation happens
+separately within each metabolomics batch.
+
+```{r prepare-metabolites}
 metabolite_results <- prepare_metabolites(
   input_files = list(neg_m1, neg_m2, pos_m1, pos_m2),
   dataset_file_names = c("NegM1", "NegM2", "PosM1", "PosM2"),
-  peak_abundance_columns = 5:ncol(neg_m1),
+  peak_abundance_columns = abundance_columns,
   peak_id_column = "Compound",
   sample_meta_data = samples,
   zero_handling = "na",
   impute_method = "mixed",
   mnar_variables = c("Sample_group", "Sex"),
   mnar_significance_threshold = 0.01,
-  return_mnar_results = TRUE,
+  imputation_seeds = 1234,
   impute_behaviour = "per batch",
   missing_feature_proportion_threshold = c(0.3, 0.75),
-  batch_specific_features_threshold = NULL,
   normalisation_method = "vsn",
-  batch_correction = FALSE,
+  batch_correction = TRUE,
   batch_column = "Metabolomic_batch",
   batch_correction_variable_columns = c("Sample_group", "Sex"),
   metabolite_aggregator_method = MsCoreUtils::robustSummary,
-  metabolite_aggregator_column = "Compound ID",
-  plot_qc_charts = FALSE,
-  verbose = TRUE
+  metabolite_aggregator_column = "Compound_ID",
+  verbose = FALSE
 )
 ```
 
-```{r inspect-metabolites, eval = FALSE}
-# Because return_mnar_results = TRUE, the result is a list.
+```{r inspect-metabolites}
 names(metabolite_results)
 
-# The processed metabolite matrix is stored in the metabolites element.
+# The processed metabolite matrix.
 dim(metabolite_results$metabolites)
-head(metabolite_results$metabolites[, 1:6])
+round(metabolite_results$metabolites[1:5, 1:6], 2)
 
-# MNAR classification tables are returned for the input datasets.
-names(metabolite_results$mnar_results)
-head(metabolite_results$mnar_results[[1]])
+# Missingness classification for the combined peak table.
+head(metabolite_results$mnar_results[["raw"]])
+table(metabolite_results$mnar_results[["raw"]]$MNAR)
 ```
+
+`MNAR` marks peaks whose detection is associated with the covariates you
+supplied. That is a heuristic for routing peaks to left-censored imputation, not
+a proof of the formal missing-not-at-random mechanism, which depends on values
+that were never measured.
 
 ## Prepare the proteomics data
 
-```{r prepare-proteins, eval = FALSE}
-# Run the proteomics preprocessing workflow on the three fraction files.
-# Here we again use mixed imputation, but perform imputation globally across
-# all samples before aggregating precursor features to proteins.
+The three fractions deliberately carry different ancillary annotation columns
+(`Modified.Sequence`, `Proteotypic`, `Precursor.Charge`). They are combined by
+taking the union, so a fraction that lacks a column gets `NA` for it.
+
+```{r prepare-proteins}
 protein_results <- prepare_proteins(
   input_files = list(fraction_1, fraction_2, fraction_3),
   fraction_file_names = c("Fraction_1", "Fraction_2", "Fraction_3"),
-  precursor_abundance_columns = 5:ncol(fraction_1),
+  precursor_abundance_columns = abundance_columns,
   precursor_id_column = "Precursor.Id",
   sample_meta_data = samples,
-  zero_handling = "na",
+  zero_handling = "leave",
   impute_method = "mixed",
   mnar_variables = c("Sample_group", "Sex"),
-  mnar_significance_threshold = 0.01,
-  return_mnar_results = TRUE,
+  imputation_seeds = 5678,
   impute_behaviour = "global",
   missing_feature_proportion_threshold = c(0.3, 0.75),
+  batch_specific_features_threshold = 0.9,
   normalisation_method = "vsn",
-  batch_correction = FALSE,
+  batch_correction = TRUE,
   batch_column = "Proteomic_batch",
   batch_correction_variable_columns = c("Sample_group", "Sex"),
   protein_aggregator_method = MsCoreUtils::robustSummary,
   protein_aggregator_column = "Protein.Group",
-  plot_qc_charts = FALSE,
-  verbose = TRUE
+  verbose = FALSE
 )
 ```
 
-```{r inspect-proteins, eval = FALSE}
-# Because return_mnar_results = TRUE, the result is a list.
+```{r inspect-proteins}
 names(protein_results)
 
-# The processed protein matrix is stored in the proteins element.
 dim(protein_results$proteins)
-head(protein_results$proteins[, 1:6])
+round(protein_results$proteins[1:5, 1:6], 2)
 
-# MNAR classification tables are returned for the input fractions.
+# One classification table per fraction.
 names(protein_results$mnar_results)
-head(protein_results$mnar_results[[1]])
 ```
 
 ## Notes
 
-- Use `impute_behaviour = "per batch"` when you want missing values to be
-  imputed separately within each batch.
-- Use `batch_correction = TRUE` if you want ComBat correction after
-  normalisation.
-- Set `plot_qc_charts = TRUE` if you want density and PCA QC plots returned in
-  the output object.
-- If you only want the processed abundance matrix, set
-  `return_mnar_results = FALSE`.
+- Long-format search engine output (a DIA-NN `report.tsv`, for example) must be
+  pivoted to one column per sample before it is passed to `prepare_proteins()`.
+- `impute_method = "mixed"` needs the `missForest` and `imputeLCMD` packages.
+  They are optional dependencies; the function checks for them before doing any
+  work and tells you how to install them.
+- Set `plot_qc_charts = TRUE` for density plots and before/after batch-correction
+  PCA. These are captured with `grDevices::recordPlot()` and are intended for
+  interactive sessions.
+- Set `imputation_seeds` for reproducible imputation. The caller's random number
+  generator is restored when the function returns, so seeding here does not
+  affect the rest of your script.
+- If you only want the abundance matrix, set `return_mnar_results = FALSE`.

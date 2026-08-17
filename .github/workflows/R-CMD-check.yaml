@@ -1,0 +1,64 @@
+name: R-CMD-check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  R-CMD-check:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      R_KEEP_PKG_SOURCE: yes
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Pinned to the R series the package is developed and tested on. Without
+      # this the runner installs the newest R, which no longer matches the
+      # Bioconductor release the package targets.
+      
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.4'
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-pandoc@v2
+
+      - name: Install Bioconductor dependencies
+        run: |
+          install.packages("BiocManager")
+                    # No explicit Bioconductor version: BiocManager picks the release
+                    # that matches the R above.
+          BiocManager::install(
+            c("limma", "MsCoreUtils", "QFeatures", "SummarizedExperiment",
+              "sva", "vsn",
+              # optional engines behind impute_method / normalisation_method
+              "impute", "imputeLCMD", "missForest", "norm", "pcaMethods",
+              "preprocessCore"),
+            ask = FALSE, update = FALSE)
+        shell: Rscript {0}
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::rcmdcheck, any::roxygen2
+          needs: check
+
+      - name: Check that the generated documentation is up to date
+        run: |
+          roxygen2::roxygenise()
+          changed <- system("git status --porcelain man/ NAMESPACE", intern = TRUE)
+          if (length(changed) > 0) {
+            cat(changed, sep = "\n")
+            stop("man/ or NAMESPACE is out of date. Run roxygen2::roxygenise() and commit.")
+          }
+        shell: Rscript {0}
+
+      - uses: r-lib/actions/check-r-package@v2
+        with:
+          upload-snapshots: true
+          args: 'c("--no-manual")'
