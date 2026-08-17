@@ -1,6 +1,11 @@
-# Multiomics.Preprocessing
+# OmicsRefinery
 
-`Multiomics.Preprocessing` is an R package for preprocessing proteomics and metabolomics data
+<img src="man/figures/logo.png"
+     align="right"
+     height="160"
+     alt="OmicsRefinery package logo" />
+
+`OmicsRefinery` is an R package for preprocessing proteomics and metabolomics data
 for downstream multi-omics analysis.
 
 It currently provides two main workflows:
@@ -42,7 +47,7 @@ BiocManager::install(
   ask = FALSE)
 
 remotes::install_github(
-  "bradleyalexward/Multiomics_preprocessing",
+  "bradleyalexward/OmicsRefinery",
   dependencies = NA)
 ```
 
