@@ -1,7 +1,8 @@
-Package: Multiomics.Preprocessing
-Type: Package
-Title: Preprocess Proteomics and Metabolomics Data
-Version: 2.0.0
+Package: OmicsRefinery
+Title: Preprocess Multi-Omics Data
+Version: 0.2.1
+URL: https://github.com/bradleyalexward/OmicsRefinery
+BugReports: https://github.com/bradleyalexward/OmicsRefinery/issues
 Authors@R:
     person(given = "Bradley",
            family = "Ward",
