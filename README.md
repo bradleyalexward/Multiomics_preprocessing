@@ -114,8 +114,8 @@ devtools::check()
 ## Citation
 Please cite this work if using or building upon it.
 
-Ward, B. (2026). OmicsRefinery: preprocessing for multi-omics data. R package version 0.2.1. https://github.com/bradleyalexward/OmicsRefinery
+Ward, B. (2026). OmicsRefinery: preprocessing for multi-omics data. R package version 3.0.0. https://github.com/bradleyalexward/OmicsRefinery
 
-Formerly released as `Multiomics.Preprocessing`; the package and both exported
-functions were renamed in 0.2.1.
+Formerly released as `Multiomics.Preprocessing`; the package and exported
+functions were renamed in 3.0.0.
 [![DOI](https://zenodo.org/badge/1187038698.svg)](https://doi.org/10.5281/zenodo.19819176)
