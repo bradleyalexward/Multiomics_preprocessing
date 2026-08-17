@@ -7,6 +7,6 @@
 # * https://testthat.r-lib.org/articles/special-files.html
 
 library(testthat)
-library(Multiomics.Preprocessing)
+library(OmicsRefinery)
 
-test_check("Multiomics.Preprocessing")
+test_check("OmicsRefinery")
