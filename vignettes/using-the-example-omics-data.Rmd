@@ -14,7 +14,7 @@ knitr::opts_chunk$set(
 )
 ```
 
-This vignette runs `prepare_metabolites()` and `prepare_proteins()` end to end
+This vignette runs `refineMetabolomics()` and `refineProteomics()` end to end
 using the example files bundled with the package in `inst/extdata`.
 
 > **The bundled files are synthetic.** Every value was drawn from a random
@@ -24,13 +24,13 @@ using the example files bundled with the package in `inst/extdata`.
 > examples look like real input.
 
 ```{r load-package}
-library(Multiomics.Preprocessing)
+library(OmicsRefinery)
 ```
 
 ## Locate and read the example files
 
 ```{r read-extdata}
-extdata_dir <- system.file("extdata", package = "Multiomics.Preprocessing")
+extdata_dir <- system.file("extdata", package = "OmicsRefinery")
 
 # Shared sample metadata used by both workflows.
 samples <- read.csv(file.path(extdata_dir, "samples.csv"), check.names = FALSE)
@@ -75,7 +75,7 @@ that look left-censored, random forest for the rest. Imputation happens
 separately within each metabolomics batch.
 
 ```{r prepare-metabolites}
-metabolite_results <- prepare_metabolites(
+metabolite_results <- refineMetabolomics(
   input_files = list(neg_m1, neg_m2, pos_m1, pos_m2),
   dataset_file_names = c("NegM1", "NegM2", "PosM1", "PosM2"),
   peak_abundance_columns = abundance_columns,
@@ -122,7 +122,7 @@ The three fractions deliberately carry different ancillary annotation columns
 taking the union, so a fraction that lacks a column gets `NA` for it.
 
 ```{r prepare-proteins}
-protein_results <- prepare_proteins(
+protein_results <- refineProteomics(
   input_files = list(fraction_1, fraction_2, fraction_3),
   fraction_file_names = c("Fraction_1", "Fraction_2", "Fraction_3"),
   precursor_abundance_columns = abundance_columns,
@@ -158,7 +158,7 @@ names(protein_results$mnar_results)
 ## Notes
 
 - Long-format search engine output (a DIA-NN `report.tsv`, for example) must be
-  pivoted to one column per sample before it is passed to `prepare_proteins()`.
+  pivoted to one column per sample before it is passed to `refineProteomics()`.
 - `impute_method = "mixed"` needs the `missForest` and `imputeLCMD` packages.
   They are optional dependencies; the function checks for them before doing any
   work and tells you how to install them.

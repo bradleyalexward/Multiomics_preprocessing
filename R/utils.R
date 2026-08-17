@@ -1,4 +1,4 @@
-# Internal helpers shared by prepare_metabolites() and prepare_proteins().
+# Internal helpers shared by refineMetabolomics() and refineProteomics().
 #
 # Nothing in this file is exported. Both public functions previously carried
 # their own copy of most of these; keeping one definition means a fix cannot

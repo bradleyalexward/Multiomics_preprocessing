@@ -1,30 +1,30 @@
 testthat::test_that("prepare functions expose impute_behaviour choices", {
-  testthat::expect_true("impute_behaviour" %in% names(formals(prepare_metabolites)))
-  testthat::expect_false("impute_by_batch" %in% names(formals(prepare_metabolites)))
+  testthat::expect_true("impute_behaviour" %in% names(formals(refineMetabolomics)))
+  testthat::expect_false("impute_by_batch" %in% names(formals(refineMetabolomics)))
   testthat::expect_identical(
-    eval(formals(prepare_metabolites)$impute_behaviour),
+    eval(formals(refineMetabolomics)$impute_behaviour),
     c("per batch", "global")
   )
 
-  testthat::expect_true("impute_behaviour" %in% names(formals(prepare_proteins)))
+  testthat::expect_true("impute_behaviour" %in% names(formals(refineProteomics)))
   testthat::expect_identical(
-    eval(formals(prepare_proteins)$impute_behaviour),
+    eval(formals(refineProteomics)$impute_behaviour),
     c("global", "per batch")
   )
 })
 
 testthat::test_that("prepare functions validate impute_behaviour values early", {
   testthat::expect_error(
-    prepare_metabolites(impute_behaviour = "bad choice"),
+    refineMetabolomics(impute_behaviour = "bad choice"),
     "one of"
   )
   testthat::expect_error(
-    prepare_proteins(impute_behaviour = "bad choice"),
+    refineProteomics(impute_behaviour = "bad choice"),
     "one of"
   )
 })
 
-testthat::test_that("prepare_proteins can impute per batch with non-mixed methods", {
+testthat::test_that("refineProteomics can impute per batch with non-mixed methods", {
   testthat::skip_if_not_installed("QFeatures")
 
   sample_meta <- data.frame(
@@ -43,7 +43,7 @@ testthat::test_that("prepare_proteins can impute per batch with non-mixed method
     stringsAsFactors = FALSE
   )
 
-  proteins <- prepare_proteins(
+  proteins <- refineProteomics(
     input_files = list(precursors),
     sample_meta_data = sample_meta,
     precursor_abundance_columns = c("S1", "S2", "S3", "S4"),
@@ -79,7 +79,7 @@ testthat::test_that("aggregation switches the result alias and assay name", {
     stringsAsFactors = FALSE
   )
 
-  res <- prepare_proteins(
+  res <- refineProteomics(
     input_files = list(precursors),
     sample_meta_data = sample_meta,
     precursor_abundance_columns = c("S1", "S2", "S3", "S4"),
@@ -97,7 +97,7 @@ testthat::test_that("aggregation switches the result alias and assay name", {
   testthat::expect_equal(sort(rownames(res$proteins)), c("P1", "P2"))
 })
 
-testthat::test_that("prepare_proteins blocks per-batch mixed imputation when a batch is fully missing", {
+testthat::test_that("refineProteomics blocks per-batch mixed imputation when a batch is fully missing", {
   testthat::skip_if_not_installed("QFeatures")
   testthat::skip_if_not_installed("missForest")
   testthat::skip_if_not_installed("imputeLCMD")
@@ -120,7 +120,7 @@ testthat::test_that("prepare_proteins blocks per-batch mixed imputation when a b
   )
 
   testthat::expect_error(
-    prepare_proteins(
+    refineProteomics(
       input_files = list(precursors),
       sample_meta_data = sample_meta,
       precursor_abundance_columns = c("S1", "S2", "S3", "S4"),
@@ -139,11 +139,11 @@ testthat::test_that("prepare_proteins blocks per-batch mixed imputation when a b
 
 testthat::test_that("missing optional imputation engines are reported before any work", {
   testthat::expect_identical(
-    Multiomics.Preprocessing:::mp_impute_engines("mixed"),
+    OmicsRefinery:::mp_impute_engines("mixed"),
     c("missForest", "imputeLCMD")
   )
   testthat::expect_identical(
-    Multiomics.Preprocessing:::mp_impute_engines("QRILC"), "imputeLCMD")
+    OmicsRefinery:::mp_impute_engines("QRILC"), "imputeLCMD")
   testthat::expect_identical(
-    Multiomics.Preprocessing:::mp_impute_engines("zero"), character(0))
+    OmicsRefinery:::mp_impute_engines("zero"), character(0))
 })
